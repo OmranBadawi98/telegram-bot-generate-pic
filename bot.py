@@ -2,7 +2,9 @@ import os
 from io import BytesIO
 from PIL import Image
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
+)
 from flask import Flask, render_template_string
 import threading
 import logging
@@ -35,9 +37,7 @@ async def process_image(image_bytes: bytes) -> BytesIO:
     user_image = Image.open(BytesIO(image_bytes)).convert("RGBA")
     watermark = Image.open(WATERMARK_PATH).convert("RGBA")
     
-    # Resize watermark to match user image size
     watermark_resized = watermark.resize(user_image.size, Image.Resampling.LANCZOS)
-    
     combined = Image.alpha_composite(user_image, watermark_resized)
 
     output = BytesIO()
@@ -48,40 +48,45 @@ async def process_image(image_bytes: bytes) -> BytesIO:
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        if not update.message:
+            logger.info("Update has no message.")
+            return
+
         user_id = update.message.from_user.id if update.message.from_user else "unknown"
         logger.info(f"Received message from user_id={user_id}")
 
         photo_bytes = None
 
-        # حالة الصورة العادية (photo)
+        # صورة داخل photo
         if update.message.photo:
             photo = update.message.photo[-1]
             photo_file = await photo.get_file()
             photo_bytes = await photo_file.download_as_bytearray()
             logger.info("Photo received as Telegram photo.")
 
-        # حالة الصورة كملف document (تحقق من نوع الملف)
+        # صورة داخل document (مرفق صورة)
         elif update.message.document:
             doc = update.message.document
-            if doc.mime_type.startswith("image/"):
+            if doc.mime_type and doc.mime_type.startswith("image/"):
                 doc_file = await doc.get_file()
                 photo_bytes = await doc_file.download_as_bytearray()
                 logger.info("Photo received as Telegram document.")
             else:
                 logger.info(f"Received document but not an image (mime_type={doc.mime_type}). Ignored.")
                 return
-
         else:
             logger.info("Message does not contain photo or image document. Ignored.")
             return
 
-        # معالجة الصورة وإضافة العلامة المائية
         output = await process_image(photo_bytes)
         await update.message.reply_photo(photo=output)
         logger.info("Replied with watermarked photo successfully.")
 
     except Exception as e:
         logger.error(f"Error processing photo: {e}")
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("مرحباً! أرسل لي صورة لأضيف عليها الشعار.")
 
 # صفحة الويب لعرض السجلات
 @app.route("/")
@@ -120,13 +125,20 @@ def run_flask():
 
 def main():
     application = ApplicationBuilder().token(TOKEN).build()
-    # دعم الصور كـ photo أو كملف document (صور فقط)
-    application.add_handler(MessageHandler(filters.PHOTO | (filters.Document.IMAGE), handle_photo))
+
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
 
     threading.Thread(target=run_flask, daemon=True).start()
 
     logger.info("Starting bot polling...")
-    application.run_polling()
+    try:
+        application.run_polling()
+    except Exception as e:
+        if "Conflict: terminated by other getUpdates request" in str(e):
+            logger.error("يوجد نسخة أخرى من البوت تعمل بنفس التوكن. تأكد من إيقافها.")
+        else:
+            logger.error(f"Error in polling: {e}")
 
 if __name__ == "__main__":
     main()
