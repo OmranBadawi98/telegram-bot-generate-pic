@@ -8,7 +8,7 @@ import threading
 import logging
 
 TOKEN = os.getenv("TOKEN")
-WATERMARK_PATH = "watermark.png"
+WATERMARK_PATH = "logo.png"
 
 app = Flask(__name__)
 
