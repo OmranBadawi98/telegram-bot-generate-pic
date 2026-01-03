@@ -4,7 +4,6 @@ from PIL import Image, ImageDraw, ImageFont
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -47,6 +46,14 @@ handler = ListHandler()
 handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 logger.addHandler(handler)
 
+# ================== KEYBOARD ==================
+def get_main_keyboard():
+    keyboard = [
+        ["➕ إضافة شعار إلى صورة"],
+        ["📝 إضافة نص إلى صورة"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 # ================== IMAGE FUNCTIONS ==================
 def add_logo(image_bytes: bytes) -> BytesIO:
     base = Image.open(BytesIO(image_bytes)).convert("RGBA")
@@ -85,35 +92,42 @@ def add_text(text: str) -> BytesIO:
 
 # ================== BOT HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        ["➕ إضافة شعار إلى صورة"],
-        ["📝 إضافة نص إلى صورة"],
-    ]
+    context.user_data["mode"] = MODE_NONE
     await update.message.reply_text(
         "اختر العملية:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        reply_markup=get_main_keyboard(),
     )
-    context.user_data["mode"] = MODE_NONE
 
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"menu_handler mode: {context.user_data.get('mode')}")
+    if context.user_data.get("mode") is not None and context.user_data.get("mode") != MODE_NONE:
+        # المستخدم في وضع خاص، لا نغير الوضع هنا
+        logger.info("User in special mode, ignoring menu_handler text.")
+        return
+
     text = update.message.text
+    if text is None:
+        logger.info("menu_handler: received message with no text.")
+        return
 
     if "شعار" in text:
         context.user_data["mode"] = MODE_LOGO
         await update.message.reply_text(
             "📸 أرسل الصورة الآن",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=get_main_keyboard(),
         )
 
     elif "نص" in text:
         context.user_data["mode"] = MODE_TEXT
         await update.message.reply_text(
             "✏️ أرسل النص الذي تريد طباعته",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=get_main_keyboard(),
         )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"handle_photo mode: {context.user_data.get('mode')}")
     if context.user_data.get("mode") != MODE_LOGO:
+        logger.info("handle_photo ignored: mode not logo")
         return
 
     logger.info("Received image for logo mode")
@@ -126,9 +140,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_photo(photo=result)
 
     context.user_data["mode"] = MODE_NONE
+    await update.message.reply_text("اختر العملية التالية:", reply_markup=get_main_keyboard())
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"handle_text mode: {context.user_data.get('mode')}")
     if context.user_data.get("mode") != MODE_TEXT:
+        logger.info("handle_text ignored: mode not text")
         return
 
     text = update.message.text
@@ -138,6 +155,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_photo(photo=result)
 
     context.user_data["mode"] = MODE_NONE
+    await update.message.reply_text("اختر العملية التالية:", reply_markup=get_main_keyboard())
 
 # ================== WEB UI ==================
 @app.route("/")
