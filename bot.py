@@ -53,7 +53,8 @@ def get_main_keyboard():
         ["➕ إضافة شعار إلى صورة"],
         ["📝 إضافة نص إلى صورة"],
     ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    # أزرار تظهر بشكل دائم
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 # ================== IMAGE FUNCTIONS ==================
 def add_logo(image_bytes: bytes) -> BytesIO:
@@ -163,20 +164,22 @@ async def handle_text_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("حدث خطأ أثناء إضافة النص. حاول مرة أخرى.")
         return MODE_TEXT
 
-async def timeout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # يعاد إرسال القائمة عند انتهاء المهلة (timeout)
-    await update.message.reply_text(
-        "انتهى وقت الانتظار. الرجاء اختيار العملية مجدداً:",
-        reply_markup=get_main_keyboard(),
-    )
-    return MODE_SELECTION
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "تم إلغاء العملية. لاختيار عملية جديدة اكتب /start",
         reply_markup=ReplyKeyboardRemove(),
     )
     return ConversationHandler.END
+
+async def conversation_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # قد لا يكون update موجود في بعض حالات timeout
+    # فقط نرسل رسالة عامة
+    if update and update.message:
+        await update.message.reply_text(
+            "انتهى وقت الانتظار. الرجاء اختيار العملية مجدداً:",
+            reply_markup=get_main_keyboard(),
+        )
+    return MODE_SELECTION
 
 # ================== WEB UI ==================
 @app.route("/")
@@ -219,6 +222,8 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
         conversation_timeout=180,  # 3 دقائق مهلة
         allow_reentry=True,
+        # إضافة استدعاء عند انتهاء المهلة (في مكتبات حديثة فقط)
+        on_timeout=conversation_timeout,
     )
 
     app_bot.add_handler(conv_handler)
