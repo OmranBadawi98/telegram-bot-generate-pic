@@ -75,8 +75,18 @@ def add_text(text: str) -> BytesIO:
     img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    max_width = img.width - 20  # المساحة المتاحة للعرض (باقي عرض الصورة مع هامش بسيط)
-    max_height = img.height // 2  # نصف ارتفاع الصورة
+    # حساب المساحات حسب النسب المطلوبة
+    width_margin = int(img.width * 0.08)
+    left_x = width_margin
+    right_x = img.width - width_margin
+    max_width = right_x - left_x
+
+    top_margin = int(img.height * 0.35)
+    bottom_margin = int(img.height * 0.08)
+    max_height = img.height - top_margin - bottom_margin
+
+    logger.info(f"المساحة الأفقية للنص: {max_width}px")
+    logger.info(f"المساحة الرأسية للنص: {max_height}px (من {top_margin}px إلى {img.height - bottom_margin}px)")
 
     font_size = int(img.height * 0.08)
     logger.info(f"حجم الخط الابتدائي: {font_size}")
@@ -107,15 +117,19 @@ def add_text(text: str) -> BytesIO:
             bbox = draw.textbbox((0, 0), line, font=font)
             line_height = bbox[3] - bbox[1]
             total_height += line_height + 5  # 5 بكسل تباعد بين الأسطر
+        total_height -= 5  # إزالة التباعد بعد السطر الأخير
+
         logger.info(f"حجم الخط الحالي: {font_size}، عدد الأسطر: {len(lines)}، ارتفاع النص الكلي: {total_height}، المساحة المتاحة: {max_height}")
+
         if total_height <= max_height:
             break
         font_size -= 1
 
-    x_start = (img.width - max_width) // 2  # اجعل النص يبدأ أفقياً من منتصف العرض مع هامش
-    y_start = img.height // 2 - total_height // 2  # ابدأ النص عمودياً من منتصف الصورة
+    # مكان البداية
+    x_start = left_x
+    y_start = top_margin + (max_height - total_height) // 2  # نوزع النص عمودياً في المساحة الرأسية المتاحة
 
-    logger.info(f"بدء رسم النص على الصورة من النقطة x={x_start}, y={y_start}")
+    logger.info(f"بدء رسم النص عند النقطة x={x_start}, y={y_start}")
 
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
