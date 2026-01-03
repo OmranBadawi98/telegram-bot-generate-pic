@@ -75,7 +75,6 @@ def add_text(text: str) -> BytesIO:
     img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    # حساب المساحات حسب النسب المطلوبة
     width_margin = int(img.width * 0.08)
     left_x = width_margin
     right_x = img.width - width_margin
@@ -116,8 +115,8 @@ def add_text(text: str) -> BytesIO:
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
             line_height = bbox[3] - bbox[1]
-            total_height += line_height + 5  # 5 بكسل تباعد بين الأسطر
-        total_height -= 5  # إزالة التباعد بعد السطر الأخير
+            total_height += line_height + 8  # زيادة التباعد بين الأسطر قليلاً (8 بكسل)
+        total_height -= 8  # إزالة التباعد بعد السطر الأخير
 
         logger.info(f"حجم الخط الحالي: {font_size}، عدد الأسطر: {len(lines)}، ارتفاع النص الكلي: {total_height}، المساحة المتاحة: {max_height}")
 
@@ -125,20 +124,44 @@ def add_text(text: str) -> BytesIO:
             break
         font_size -= 1
 
-    # مكان البداية الرأسي
-    y_start = top_margin + (max_height - total_height) // 2  # توزيع عمودي للنص
+    y_start = top_margin + (max_height - total_height) // 2  # توزيع عمودي
 
     logger.info(f"بدء رسم النص عند النقطة y={y_start}")
 
-    # رسم كل سطر مع محاذاة وسط أفقياً
-    for line in lines:
+    for idx, line in enumerate(lines):
+        words = line.split()
         bbox = draw.textbbox((0, 0), line, font=font)
         line_width = bbox[2] - bbox[0]
         line_height = bbox[3] - bbox[1]
-        x_start = left_x + (max_width - line_width) / 2  # محاذاة وسط
-        draw.text((x_start, y_start), line, font=font, fill="white")
-        logger.info(f"رسم السطر: '{line}' عند x={x_start}, y={y_start}")
-        y_start += line_height + 5
+
+        if idx == len(lines) - 1 or len(words) == 1:
+            # السطر الأخير أو سطر بكلمة واحدة: محاذاة وسط عادية
+            x_start = left_x + (max_width - line_width) / 2
+            draw.text((x_start, y_start), line, font=font, fill="white")
+            logger.info(f"رسم السطر الأخير أو كلمة واحدة: '{line}' عند x={x_start}, y={y_start}")
+        else:
+            # توزيع الكلمات بالكامل (justified)
+            total_words_width = 0
+            word_widths = []
+            for w in words:
+                w_bbox = draw.textbbox((0,0), w, font=font)
+                w_width = w_bbox[2] - w_bbox[0]
+                word_widths.append(w_width)
+                total_words_width += w_width
+
+            total_space = max_width - total_words_width
+            if len(words) > 1:
+                space_between_words = total_space / (len(words) - 1)
+            else:
+                space_between_words = 0
+
+            x = left_x
+            for i, w in enumerate(words):
+                draw.text((x, y_start), w, font=font, fill="white")
+                logger.info(f"رسم كلمة: '{w}' عند x={x}, y={y_start}")
+                x += word_widths[i] + space_between_words
+
+        y_start += line_height + 8
 
     out = BytesIO()
     out.name = "text.png"
