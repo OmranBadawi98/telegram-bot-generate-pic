@@ -1,144 +1,177 @@
 import os
 from io import BytesIO
-from PIL import Image
-from telegram import Update
+from PIL import Image, ImageDraw, ImageFont
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 from telegram.ext import (
-    ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
+    ApplicationBuilder,
+    ContextTypes,
+    MessageHandler,
+    CommandHandler,
+    filters,
 )
 from flask import Flask, render_template_string
 import threading
 import logging
 
+# ================== CONFIG ==================
 TOKEN = os.getenv("TOKEN")
-WATERMARK_PATH = "logo.png"
 
+LOGO_PATH = "logo.png"
+BASE_IMAGE_PATH = "base.png"
+FONT_PATH = "font.ttf"
+
+MODE_NONE = None
+MODE_LOGO = "logo"
+MODE_TEXT = "text"
+
+# ================== FLASK ==================
 app = Flask(__name__)
 
-# إعداد اللوجر
-logger = logging.getLogger("bot_logger")
+# ================== LOGGING ==================
+logger = logging.getLogger("bot")
 logger.setLevel(logging.INFO)
 
-# قائمة لحفظ آخر 100 سجل (لتعرضها في الويب)
 log_records = []
 
 class ListHandler(logging.Handler):
     def emit(self, record):
-        log_entry = self.format(record)
-        log_records.append(log_entry)
+        log_records.append(self.format(record))
         if len(log_records) > 100:
             log_records.pop(0)
 
-list_handler = ListHandler()
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-list_handler.setFormatter(formatter)
-logger.addHandler(list_handler)
+handler = ListHandler()
+handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+logger.addHandler(handler)
 
-async def process_image(image_bytes: bytes) -> BytesIO:
-    user_image = Image.open(BytesIO(image_bytes)).convert("RGBA")
-    watermark = Image.open(WATERMARK_PATH).convert("RGBA")
-    
-    watermark_resized = watermark.resize(user_image.size, Image.Resampling.LANCZOS)
-    combined = Image.alpha_composite(user_image, watermark_resized)
+# ================== IMAGE FUNCTIONS ==================
+def add_logo(image_bytes: bytes) -> BytesIO:
+    base = Image.open(BytesIO(image_bytes)).convert("RGBA")
+    logo = Image.open(LOGO_PATH).convert("RGBA")
 
-    output = BytesIO()
-    output.name = "image.png"
-    combined.save(output, format="PNG")
-    output.seek(0)
-    return output
+    logo = logo.resize(base.size, Image.Resampling.LANCZOS)
+    combined = Image.alpha_composite(base, logo)
+
+    out = BytesIO()
+    out.name = "result.png"
+    combined.save(out, format="PNG")
+    out.seek(0)
+    return out
+
+def add_text(text: str) -> BytesIO:
+    img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+
+    font_size = int(img.height * 0.08)
+    font = ImageFont.truetype(FONT_PATH, font_size)
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    x = (img.width - text_w) / 2
+    y = (img.height - text_h) / 2
+
+    draw.text((x, y), text, font=font, fill="white")
+
+    out = BytesIO()
+    out.name = "text.png"
+    img.save(out, format="PNG")
+    out.seek(0)
+    return out
+
+# ================== BOT HANDLERS ==================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        ["➕ إضافة شعار إلى صورة"],
+        ["📝 إضافة نص إلى صورة"],
+    ]
+    await update.message.reply_text(
+        "اختر العملية:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+    )
+    context.user_data["mode"] = MODE_NONE
+
+async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if "شعار" in text:
+        context.user_data["mode"] = MODE_LOGO
+        await update.message.reply_text(
+            "📸 أرسل الصورة الآن",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+    elif "نص" in text:
+        context.user_data["mode"] = MODE_TEXT
+        await update.message.reply_text(
+            "✏️ أرسل النص الذي تريد طباعته",
+            reply_markup=ReplyKeyboardRemove(),
+        )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not update.message:
-            logger.info("Update has no message.")
-            return
+    if context.user_data.get("mode") != MODE_LOGO:
+        return
 
-        user_id = update.message.from_user.id if update.message.from_user else "unknown"
-        logger.info(f"Received message from user_id={user_id}")
+    logger.info("Received image for logo mode")
 
-        photo_bytes = None
+    photo = update.message.photo[-1]
+    file = await photo.get_file()
+    image_bytes = await file.download_as_bytearray()
 
-        # صورة داخل photo
-        if update.message.photo:
-            photo = update.message.photo[-1]
-            photo_file = await photo.get_file()
-            photo_bytes = await photo_file.download_as_bytearray()
-            logger.info("Photo received as Telegram photo.")
+    result = add_logo(image_bytes)
+    await update.message.reply_photo(photo=result)
 
-        # صورة داخل document (مرفق صورة)
-        elif update.message.document:
-            doc = update.message.document
-            if doc.mime_type and doc.mime_type.startswith("image/"):
-                doc_file = await doc.get_file()
-                photo_bytes = await doc_file.download_as_bytearray()
-                logger.info("Photo received as Telegram document.")
-            else:
-                logger.info(f"Received document but not an image (mime_type={doc.mime_type}). Ignored.")
-                return
-        else:
-            logger.info("Message does not contain photo or image document. Ignored.")
-            return
+    context.user_data["mode"] = MODE_NONE
 
-        output = await process_image(photo_bytes)
-        await update.message.reply_photo(photo=output)
-        logger.info("Replied with watermarked photo successfully.")
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("mode") != MODE_TEXT:
+        return
 
-    except Exception as e:
-        logger.error(f"Error processing photo: {e}")
+    text = update.message.text
+    logger.info(f"Received text: {text}")
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحباً! أرسل لي صورة لأضيف عليها الشعار.")
+    result = add_text(text)
+    await update.message.reply_photo(photo=result)
 
-# صفحة الويب لعرض السجلات
+    context.user_data["mode"] = MODE_NONE
+
+# ================== WEB UI ==================
 @app.route("/")
 def home():
-    html = """
-    <html lang="ar">
-    <head>
-        <meta charset="UTF-8" />
-        <title>سجلات البوت</title>
-        <style>
-            body {font-family: Arial, sans-serif; direction: rtl; background: #f9f9f9; padding: 20px;}
-            h1 {color: #333;}
-            pre {
-                background: #222;
-                color: #eee;
-                padding: 15px;
-                border-radius: 8px;
-                height: 500px;
-                overflow-y: scroll;
-                white-space: pre-wrap;
-                word-wrap: break-word;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>سجلات البوت</h1>
+    return render_template_string(
+        """
+        <html>
+        <head><title>Bot Logs</title></head>
+        <body style="background:#111;color:#eee;font-family:monospace">
+        <h2>Logs</h2>
         <pre>{{ logs }}</pre>
-    </body>
-    </html>
-    """
-    return render_template_string(html, logs="\n".join(log_records))
+        </body>
+        </html>
+        """,
+        logs="\n".join(log_records),
+    )
 
 def run_flask():
     port = int(os.getenv("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run("0.0.0.0", port=port)
 
+# ================== MAIN ==================
 def main():
-    application = ApplicationBuilder().token(TOKEN).build()
+    app_bot = ApplicationBuilder().token(TOKEN).build()
 
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_handler))
+    app_bot.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     threading.Thread(target=run_flask, daemon=True).start()
 
-    logger.info("Starting bot polling...")
-    try:
-        application.run_polling()
-    except Exception as e:
-        if "Conflict: terminated by other getUpdates request" in str(e):
-            logger.error("يوجد نسخة أخرى من البوت تعمل بنفس التوكن. تأكد من إيقافها.")
-        else:
-            logger.error(f"Error in polling: {e}")
+    logger.info("Bot started")
+    app_bot.run_polling()
 
 if __name__ == "__main__":
     main()
