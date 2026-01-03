@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw, ImageFont
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -11,6 +12,7 @@ from telegram.ext import (
     MessageHandler,
     CommandHandler,
     filters,
+    ConversationHandler,
 )
 from flask import Flask, render_template_string
 import threading
@@ -23,9 +25,8 @@ LOGO_PATH = "logo.png"
 BASE_IMAGE_PATH = "base.png"
 FONT_PATH = "font.ttf"
 
-MODE_NONE = None
-MODE_LOGO = "logo"
-MODE_TEXT = "text"
+# Conversation states
+MODE_SELECTION, MODE_LOGO, MODE_TEXT = range(3)
 
 # ================== FLASK ==================
 app = Flask(__name__)
@@ -92,76 +93,90 @@ def add_text(text: str) -> BytesIO:
 
 # ================== BOT HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["mode"] = MODE_NONE
+    logger.info("User started the bot")
     await update.message.reply_text(
         "اختر العملية:",
         reply_markup=get_main_keyboard(),
     )
+    return MODE_SELECTION
 
-async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mode = context.user_data.get("mode")
-    logger.info(f"menu_handler mode: {mode}")
-    if mode is not None and mode != MODE_NONE:
-        # المستخدم في وضع خاص، لا نغير الوضع هنا ولا نتابع هنا
-        logger.info("User in special mode, ignoring menu_handler text.")
-        return
-
+async def mode_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if text is None:
-        logger.info("menu_handler: received message with no text.")
-        return
+    logger.info(f"Mode selection received: {text}")
 
     if "شعار" in text:
-        context.user_data["mode"] = MODE_LOGO
         await update.message.reply_text(
             "📸 أرسل الصورة الآن",
-            reply_markup=get_main_keyboard(),
+            reply_markup=ReplyKeyboardRemove(),
         )
+        return MODE_LOGO
 
     elif "نص" in text:
-        context.user_data["mode"] = MODE_TEXT
         await update.message.reply_text(
             "✏️ أرسل النص الذي تريد طباعته",
-            reply_markup=get_main_keyboard(),
+            reply_markup=ReplyKeyboardRemove(),
         )
+        return MODE_TEXT
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mode = context.user_data.get("mode")
-    logger.info(f"handle_photo mode: {mode}")
-    if mode != MODE_LOGO:
-        logger.info("handle_photo ignored: mode not logo")
-        return
+    else:
+        await update.message.reply_text("الرجاء اختيار أحد الخيارات من لوحة المفاتيح.")
+        return MODE_SELECTION
 
-    logger.info("Received image for logo mode")
+async def handle_logo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("الرجاء إرسال صورة صالحة.")
+        return MODE_LOGO
 
     photo = update.message.photo[-1]
     file = await photo.get_file()
     image_bytes = await file.download_as_bytearray()
 
-    result = add_logo(image_bytes)
-    await update.message.reply_photo(photo=result)
+    logger.info("Processing logo addition")
 
-    context.user_data["mode"] = MODE_NONE
-    await update.message.reply_text("اختر العملية التالية:", reply_markup=get_main_keyboard())
+    try:
+        result = add_logo(image_bytes)
+        await update.message.reply_photo(photo=result)
+        await update.message.reply_text(
+            "تمت إضافة الشعار بنجاح.\nاختر العملية التالية:",
+            reply_markup=get_main_keyboard(),
+        )
+        return MODE_SELECTION
+    except Exception as e:
+        logger.error(f"Error adding logo: {e}")
+        await update.message.reply_text("حدث خطأ أثناء إضافة الشعار. حاول مرة أخرى.")
+        return MODE_LOGO
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mode = context.user_data.get("mode")
-    logger.info(f"handle_text mode: {mode}")
-    if mode != MODE_TEXT:
-        logger.info("handle_text ignored: mode not text")
-        return
-
+async def handle_text_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    logger.info(f"Received text: {text}")
+    logger.info(f"Received text to add: {text}")
 
     try:
         result = add_text(text)
         await update.message.reply_photo(photo=result)
-        context.user_data["mode"] = MODE_NONE
-        await update.message.reply_text("اختر العملية التالية:", reply_markup=get_main_keyboard())
+        await update.message.reply_text(
+            "تمت إضافة النص بنجاح.\nاختر العملية التالية:",
+            reply_markup=get_main_keyboard(),
+        )
+        return MODE_SELECTION
     except Exception as e:
-        logger.error(f"Error in handle_text: {e}")
-        await update.message.reply_text("حدث خطأ أثناء معالجة النص، حاول مرة أخرى.")
+        logger.error(f"Error adding text: {e}")
+        await update.message.reply_text("حدث خطأ أثناء إضافة النص. حاول مرة أخرى.")
+        return MODE_TEXT
+
+async def timeout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # يعاد إرسال القائمة عند انتهاء المهلة (timeout)
+    await update.message.reply_text(
+        "انتهى وقت الانتظار. الرجاء اختيار العملية مجدداً:",
+        reply_markup=get_main_keyboard(),
+    )
+    return MODE_SELECTION
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "تم إلغاء العملية. لاختيار عملية جديدة اكتب /start",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return ConversationHandler.END
 
 # ================== WEB UI ==================
 @app.route("/")
@@ -187,16 +202,31 @@ def run_flask():
 def main():
     app_bot = ApplicationBuilder().token(TOKEN).build()
 
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_handler))
-    app_bot.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            MODE_SELECTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, mode_selection),
+            ],
+            MODE_LOGO: [
+                MessageHandler(filters.PHOTO, handle_logo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, mode_selection),  # نص بدل صورة؟
+            ],
+            MODE_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_mode),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
+        conversation_timeout=180,  # 3 دقائق مهلة
+        allow_reentry=True,
+    )
+
+    app_bot.add_handler(conv_handler)
 
     threading.Thread(target=run_flask, daemon=True).start()
 
     logger.info("Bot started")
     app_bot.run_polling()
-
 
 if __name__ == "__main__":
     main()
