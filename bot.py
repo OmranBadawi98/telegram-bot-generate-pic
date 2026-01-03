@@ -125,18 +125,17 @@ def add_text(text: str) -> BytesIO:
             break
         font_size -= 1
 
-    # مكان البداية
-    x_start = left_x
-    y_start = top_margin + (max_height - total_height) // 2  # نوزع النص عمودياً في المساحة الرأسية المتاحة
+    # مكان البداية الرأسي
+    y_start = top_margin + (max_height - total_height) // 2  # توزيع عمودي للنص
 
-    logger.info(f"بدء رسم النص عند النقطة x={x_start}, y={y_start}")
+    logger.info(f"بدء رسم النص عند النقطة y={y_start}")
 
+    # رسم كل سطر مع محاذاة وسط أفقياً
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         line_width = bbox[2] - bbox[0]
         line_height = bbox[3] - bbox[1]
-        # احسب x_start بحيث يكون النص في منتصف المساحة الأفقية
-        x_start = left_x + (max_width - line_width) / 2
+        x_start = left_x + (max_width - line_width) / 2  # محاذاة وسط
         draw.text((x_start, y_start), line, font=font, fill="white")
         logger.info(f"رسم السطر: '{line}' عند x={x_start}, y={y_start}")
         y_start += line_height + 5
