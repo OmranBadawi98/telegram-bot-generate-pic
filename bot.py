@@ -133,9 +133,12 @@ def add_text(text: str) -> BytesIO:
 
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
+        line_width = bbox[2] - bbox[0]
         line_height = bbox[3] - bbox[1]
+        # احسب x_start بحيث يكون النص في منتصف المساحة الأفقية
+        x_start = left_x + (max_width - line_width) / 2
         draw.text((x_start, y_start), line, font=font, fill="white")
-        logger.info(f"رسم السطر: '{line}' عند y={y_start}")
+        logger.info(f"رسم السطر: '{line}' عند x={x_start}, y={y_start}")
         y_start += line_height + 5
 
     out = BytesIO()
