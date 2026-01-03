@@ -81,6 +81,7 @@ def add_text(text: str) -> BytesIO:
 
     font_size = int(img.height * 0.08)
 
+
     def wrap_text(text, font, max_width):
         words = text.split()
         lines = []
