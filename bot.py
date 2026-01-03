@@ -71,13 +71,14 @@ def add_logo(image_bytes: bytes) -> BytesIO:
     return out
 
 def add_text(text: str) -> BytesIO:
+    logger.info(f"بدء إضافة نص: {text}")
+    
     img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    max_width = img.width * 0.9  # عرض النص لا يتجاوز 90% من عرض الصورة
-    max_height = img.height * 0.9  # ارتفاع النص لا يتجاوز 90% من ارتفاع الصورة
+    max_width = img.width * 0.9
+    max_height = img.height * 0.9
 
-    # نبدأ بحجم خط كبير ثم نصغر تدريجيًا
     font_size = int(img.height * 0.08)
 
     def wrap_text(text, font, max_width):
@@ -86,7 +87,8 @@ def add_text(text: str) -> BytesIO:
         current_line = ""
         for word in words:
             test_line = f"{current_line} {word}".strip()
-            w, h = draw.textsize(test_line, font=font)
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            w = bbox[2] - bbox[0]
             if w <= max_width:
                 current_line = test_line
             else:
@@ -101,8 +103,14 @@ def add_text(text: str) -> BytesIO:
         font = ImageFont.truetype(FONT_PATH, font_size)
         lines = wrap_text(text, font, max_width)
 
-        total_height = sum(draw.textsize(line, font=font)[1] for line in lines)
-        # نحسب المسافة بين الأسطر (مثلاً 10% من حجم الخط)
+        # حساب ارتفاع النص الكلي مع المسافات بين الأسطر
+        total_height = 0
+        line_heights = []
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            h = bbox[3] - bbox[1]
+            line_heights.append(h)
+            total_height += h
         line_spacing = int(font_size * 0.1)
         total_height += line_spacing * (len(lines) - 1)
 
@@ -110,11 +118,14 @@ def add_text(text: str) -> BytesIO:
             break
         font_size -= 1
 
-    # الآن نرسم النص مركزيًا عموديًا وأفقيًا
+    logger.info(f"حجم الخط النهائي: {font_size}, عدد الأسطر: {len(lines)}")
+
     y_start = (img.height - total_height) / 2
 
-    for line in lines:
-        w, h = draw.textsize(line, font=font)
+    for i, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        w = bbox[2] - bbox[0]
+        h = line_heights[i]
         x = (img.width - w) / 2
         draw.text((x, y_start), line, font=font, fill="white")
         y_start += h + line_spacing
@@ -123,6 +134,8 @@ def add_text(text: str) -> BytesIO:
     out.name = "text.png"
     img.save(out, format="PNG")
     out.seek(0)
+
+    logger.info("تمت إضافة النص إلى الصورة بنجاح.")
     return out
 
 # ================== BOT HANDLERS ==================
