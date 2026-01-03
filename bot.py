@@ -75,13 +75,13 @@ def add_text(text: str) -> BytesIO:
     img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    max_width = img.width - img.width // 2  # المساحة المتبقية من منتصف الصورة إلى الطرف
-    max_height = int(img.height * 0.5)      # نصف ارتفاع الصورة تقريبا
+    max_width = img.width - 20  # المساحة المتاحة للعرض (باقي عرض الصورة مع هامش بسيط)
+    max_height = img.height // 2  # نصف ارتفاع الصورة
 
     font_size = int(img.height * 0.08)
     logger.info(f"حجم الخط الابتدائي: {font_size}")
 
-    def wrap_text_from_center(text, font, max_width):
+    def wrap_text(text, font, max_width):
         words = text.split()
         lines = []
         current_line = ""
@@ -101,19 +101,19 @@ def add_text(text: str) -> BytesIO:
 
     while font_size > 10:
         font = ImageFont.truetype(FONT_PATH, font_size)
-        lines = wrap_text_from_center(text, font, max_width)
+        lines = wrap_text(text, font, max_width)
         total_height = 0
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
             line_height = bbox[3] - bbox[1]
-            total_height += line_height + 5
+            total_height += line_height + 5  # 5 بكسل تباعد بين الأسطر
         logger.info(f"حجم الخط الحالي: {font_size}، عدد الأسطر: {len(lines)}، ارتفاع النص الكلي: {total_height}، المساحة المتاحة: {max_height}")
         if total_height <= max_height:
             break
         font_size -= 1
 
-    x_start = img.width // 2
-    y_start = (img.height - total_height) / 2
+    x_start = (img.width - max_width) // 2  # اجعل النص يبدأ أفقياً من منتصف العرض مع هامش
+    y_start = img.height // 2 - total_height // 2  # ابدأ النص عمودياً من منتصف الصورة
 
     logger.info(f"بدء رسم النص على الصورة من النقطة x={x_start}, y={y_start}")
 
