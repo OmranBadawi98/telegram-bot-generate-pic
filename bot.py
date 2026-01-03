@@ -71,16 +71,15 @@ def add_logo(image_bytes: bytes) -> BytesIO:
     return out
 
 def add_text(text: str) -> BytesIO:
-    logger.info(f"بدء إضافة نص: {text}")
-    
     img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    max_width = img.width * 0.9
-    max_height = img.height * 0.9
+    max_width = int(img.width * 0.9)  # العرض الأقصى للنص (مثلاً 90% من عرض الصورة)
+    max_height = int(img.height * 0.5)  # الارتفاع الأقصى (نصف الصورة تقريبًا)
 
+    # نبدأ بحجم خط كبير نسبيًا
     font_size = int(img.height * 0.08)
-
+    font = ImageFont.truetype(FONT_PATH, font_size)
 
     def wrap_text(text, font, max_width):
         words = text.split()
@@ -100,43 +99,34 @@ def add_text(text: str) -> BytesIO:
             lines.append(current_line)
         return lines
 
+    # محاولة ضبط حجم الخط ليناسب النص ضمن العرض والارتفاع
     while font_size > 10:
         font = ImageFont.truetype(FONT_PATH, font_size)
         lines = wrap_text(text, font, max_width)
-
-        # حساب ارتفاع النص الكلي مع المسافات بين الأسطر
         total_height = 0
-        line_heights = []
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
-            h = bbox[3] - bbox[1]
-            line_heights.append(h)
-            total_height += h
-        line_spacing = int(font_size * 0.1)
-        total_height += line_spacing * (len(lines) - 1)
-
+            line_height = bbox[3] - bbox[1]
+            total_height += line_height + 5  # 5 بكسل مسافة بين السطور
         if total_height <= max_height:
             break
         font_size -= 1
 
-    logger.info(f"حجم الخط النهائي: {font_size}, عدد الأسطر: {len(lines)}")
+    # حساب نقطة البداية X و Y لنص متمركز أفقيًا وعموديًا من منتصف الصورة
+    y_start = (img.height - total_height) / 2  # وسط الصورة عموديًا حسب ارتفاع النص
 
-    y_start = (img.height - total_height) / 2
-
-    for i, line in enumerate(lines):
+    for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
-        w = bbox[2] - bbox[0]
-        h = line_heights[i]
-        x = (img.width - w) / 2
+        line_width = bbox[2] - bbox[0]
+        line_height = bbox[3] - bbox[1]
+        x = (img.width - line_width) / 2  # تمركز أفقي
         draw.text((x, y_start), line, font=font, fill="white")
-        y_start += h + line_spacing
+        y_start += line_height + 5
 
     out = BytesIO()
     out.name = "text.png"
     img.save(out, format="PNG")
     out.seek(0)
-
-    logger.info("تمت إضافة النص إلى الصورة بنجاح.")
     return out
 
 # ================== BOT HANDLERS ==================
