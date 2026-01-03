@@ -99,9 +99,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"menu_handler mode: {context.user_data.get('mode')}")
-    if context.user_data.get("mode") is not None and context.user_data.get("mode") != MODE_NONE:
-        # المستخدم في وضع خاص، لا نغير الوضع هنا
+    mode = context.user_data.get("mode")
+    logger.info(f"menu_handler mode: {mode}")
+    if mode is not None and mode != MODE_NONE:
+        # المستخدم في وضع خاص، لا نغير الوضع هنا ولا نتابع هنا
         logger.info("User in special mode, ignoring menu_handler text.")
         return
 
@@ -123,6 +124,26 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✏️ أرسل النص الذي تريد طباعته",
             reply_markup=get_main_keyboard(),
         )
+
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mode = context.user_data.get("mode")
+    logger.info(f"handle_text mode: {mode}")
+    if mode != MODE_TEXT:
+        logger.info("handle_text ignored: mode not text")
+        return
+
+    text = update.message.text
+    logger.info(f"Received text: {text}")
+
+    try:
+        result = add_text(text)
+        await update.message.reply_photo(photo=result)
+        context.user_data["mode"] = MODE_NONE
+        await update.message.reply_text("اختر العملية التالية:", reply_markup=get_main_keyboard())
+    except Exception as e:
+        logger.error(f"Error in handle_text: {e}")
+        await update.message.reply_text("حدث خطأ أثناء معالجة النص، حاول مرة أخرى.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"handle_photo mode: {context.user_data.get('mode')}")
@@ -185,6 +206,7 @@ def main():
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_handler))
     app_bot.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
 
     threading.Thread(target=run_flask, daemon=True).start()
 
