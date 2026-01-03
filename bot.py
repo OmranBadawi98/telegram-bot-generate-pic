@@ -74,17 +74,50 @@ def add_text(text: str) -> BytesIO:
     img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
+    max_width = img.width * 0.9  # عرض النص لا يتجاوز 90% من عرض الصورة
+    max_height = img.height * 0.9  # ارتفاع النص لا يتجاوز 90% من ارتفاع الصورة
+
+    # نبدأ بحجم خط كبير ثم نصغر تدريجيًا
     font_size = int(img.height * 0.08)
-    font = ImageFont.truetype(FONT_PATH, font_size)
 
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
+    def wrap_text(text, font, max_width):
+        words = text.split()
+        lines = []
+        current_line = ""
+        for word in words:
+            test_line = f"{current_line} {word}".strip()
+            w, h = draw.textsize(test_line, font=font)
+            if w <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                current_line = word
+        if current_line:
+            lines.append(current_line)
+        return lines
 
-    x = (img.width - text_w) / 2
-    y = (img.height - text_h) / 2
+    while font_size > 10:
+        font = ImageFont.truetype(FONT_PATH, font_size)
+        lines = wrap_text(text, font, max_width)
 
-    draw.text((x, y), text, font=font, fill="white")
+        total_height = sum(draw.textsize(line, font=font)[1] for line in lines)
+        # نحسب المسافة بين الأسطر (مثلاً 10% من حجم الخط)
+        line_spacing = int(font_size * 0.1)
+        total_height += line_spacing * (len(lines) - 1)
+
+        if total_height <= max_height:
+            break
+        font_size -= 1
+
+    # الآن نرسم النص مركزيًا عموديًا وأفقيًا
+    y_start = (img.height - total_height) / 2
+
+    for line in lines:
+        w, h = draw.textsize(line, font=font)
+        x = (img.width - w) / 2
+        draw.text((x, y_start), line, font=font, fill="white")
+        y_start += h + line_spacing
 
     out = BytesIO()
     out.name = "text.png"
