@@ -108,6 +108,43 @@ def add_text(text: str) -> BytesIO:
             lines.append(current_line)
         return lines
 
+    # دالة تمديد السطر بإضافة مد "ـ" بين الحروف حتى يصل لعرض max_width
+    def stretch_text(line, font, max_width):
+        # إزالة الفراغات الزائدة
+        line = line.strip()
+        # إذا السطر كلمة واحدة فقط أو أقل من 3 حروف، لا نعدل
+        if len(line) <= 3:
+            return line
+        
+        # نحاول إدخال "ـ" بين الحروف تدريجياً
+        chars = list(line)
+        # أماكن ممكن إدخال المد (بين الحروف)
+        positions = list(range(1, len(chars)))
+
+        # نحاول زيادة عدد المدود حتى نصل للعرض المطلوب
+        best_line = line
+        bbox = draw.textbbox((0, 0), best_line, font=font)
+        width = bbox[2] - bbox[0]
+        if width >= max_width * 0.95:  # إذا قريب من الحد لا نغير
+            return best_line
+
+        # جرب زيادة مدود تدريجياً
+        for extra_len in range(1, 10):  # حد أقصى 10 محاولات تمديد
+            # نكرر وضع المد بين كل حرف عدة مرات
+            new_chars = []
+            for i, ch in enumerate(chars):
+                new_chars.append(ch)
+                if i < len(chars) -1:
+                    new_chars.append("ـ" * extra_len)
+            candidate = "".join(new_chars)
+            bbox = draw.textbbox((0, 0), candidate, font=font)
+            w = bbox[2] - bbox[0]
+            if w >= max_width * 0.95:
+                return candidate
+            best_line = candidate
+            width = w
+        return best_line
+
     while font_size > 10:
         font = ImageFont.truetype(FONT_PATH, font_size)
         lines = wrap_text(text, font, max_width)
@@ -115,8 +152,8 @@ def add_text(text: str) -> BytesIO:
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
             line_height = bbox[3] - bbox[1]
-            total_height += line_height + 8  # زيادة التباعد بين الأسطر قليلاً (8 بكسل)
-        total_height -= 8  # إزالة التباعد بعد السطر الأخير
+            total_height += line_height + 5
+        total_height -= 5
 
         logger.info(f"حجم الخط الحالي: {font_size}، عدد الأسطر: {len(lines)}، ارتفاع النص الكلي: {total_height}، المساحة المتاحة: {max_height}")
 
@@ -124,44 +161,19 @@ def add_text(text: str) -> BytesIO:
             break
         font_size -= 1
 
-    y_start = top_margin + (max_height - total_height) // 2  # توزيع عمودي
+    y_start = top_margin + (max_height - total_height) // 2
 
     logger.info(f"بدء رسم النص عند النقطة y={y_start}")
 
-    for idx, line in enumerate(lines):
-        words = line.split()
+    for line in lines:
+        line = stretch_text(line, font, max_width)
         bbox = draw.textbbox((0, 0), line, font=font)
         line_width = bbox[2] - bbox[0]
         line_height = bbox[3] - bbox[1]
-
-        if idx == len(lines) - 1 or len(words) == 1:
-            # السطر الأخير أو سطر بكلمة واحدة: محاذاة وسط عادية
-            x_start = left_x + (max_width - line_width) / 2
-            draw.text((x_start, y_start), line, font=font, fill="white")
-            logger.info(f"رسم السطر الأخير أو كلمة واحدة: '{line}' عند x={x_start}, y={y_start}")
-        else:
-            # توزيع الكلمات بالكامل (justified)
-            total_words_width = 0
-            word_widths = []
-            for w in words:
-                w_bbox = draw.textbbox((0,0), w, font=font)
-                w_width = w_bbox[2] - w_bbox[0]
-                word_widths.append(w_width)
-                total_words_width += w_width
-
-            total_space = max_width - total_words_width
-            if len(words) > 1:
-                space_between_words = total_space / (len(words) - 1)
-            else:
-                space_between_words = 0
-
-            x = left_x
-            for i, w in enumerate(words):
-                draw.text((x, y_start), w, font=font, fill="white")
-                logger.info(f"رسم كلمة: '{w}' عند x={x}, y={y_start}")
-                x += word_widths[i] + space_between_words
-
-        y_start += line_height + 8
+        x_start = left_x + (max_width - line_width) / 2
+        draw.text((x_start, y_start), line, font=font, fill="white")
+        logger.info(f"رسم السطر: '{line}' عند x={x_start}, y={y_start}")
+        y_start += line_height + 5
 
     out = BytesIO()
     out.name = "text.png"
