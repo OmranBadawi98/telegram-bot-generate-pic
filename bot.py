@@ -108,42 +108,43 @@ def add_text(text: str) -> BytesIO:
             lines.append(current_line)
         return lines
 
-    # دالة تمديد السطر بإضافة مد "ـ" بين الحروف حتى يصل لعرض max_width
-    def stretch_text(line, font, max_width):
-        # إزالة الفراغات الزائدة
-        line = line.strip()
-        # إذا السطر كلمة واحدة فقط أو أقل من 3 حروف، لا نعدل
-        if len(line) <= 3:
-            return line
-        
-        # نحاول إدخال "ـ" بين الحروف تدريجياً
-        chars = list(line)
-        # أماكن ممكن إدخال المد (بين الحروف)
-        positions = list(range(1, len(chars)))
+    def justify_line(line, draw, font, max_width):
+        words = line.split()
+        if len(words) == 1:
+            return line  # لا تمديد في كلمة واحدة
 
-        # نحاول زيادة عدد المدود حتى نصل للعرض المطلوب
-        best_line = line
-        bbox = draw.textbbox((0, 0), best_line, font=font)
-        width = bbox[2] - bbox[0]
-        if width >= max_width * 0.95:  # إذا قريب من الحد لا نغير
-            return best_line
+        # حساب العرض الكلي للكلمات بدون مسافات
+        total_words_width = sum(draw.textbbox((0,0), w, font=font)[2] - draw.textbbox((0,0), w, font=font)[0] for w in words)
 
-        # جرب زيادة مدود تدريجياً
-        for extra_len in range(1, 10):  # حد أقصى 10 محاولات تمديد
-            # نكرر وضع المد بين كل حرف عدة مرات
-            new_chars = []
-            for i, ch in enumerate(chars):
-                new_chars.append(ch)
-                if i < len(chars) -1:
-                    new_chars.append("ـ" * extra_len)
-            candidate = "".join(new_chars)
-            bbox = draw.textbbox((0, 0), candidate, font=font)
-            w = bbox[2] - bbox[0]
-            if w >= max_width * 0.95:
-                return candidate
-            best_line = candidate
-            width = w
-        return best_line
+        # حساب المساحة الفارغة التي نحتاج نملأها بالتمديد
+        space_to_fill = max_width - total_words_width
+        if space_to_fill <= 0:
+            return line  # لا تمديد لو النص أطول من المساحة
+
+        # عدد الحروف التي يمكننا وضع التمديد بينها (بين الحروف وليس بين الكلمات)
+        extend_positions = sum(len(w) - 1 for w in words if len(w) > 1)
+        if extend_positions == 0:
+            return line  # لا تمديد لو ما في حروف كافية
+
+        # كم عدد حروف التمديد لكل موقع تقريباً
+        extend_per_pos = space_to_fill / extend_positions
+
+        # نحدد عدد حروف التمديد لكل موقع (على شكل عدد صحيح)
+        extend_chars_per_pos = max(1, int(extend_per_pos / (draw.textbbox((0,0), "ـ", font=font)[2] - draw.textbbox((0,0), "ـ", font=font)[0])))
+
+        # نبدأ نبني السطر مع التمديد
+        justified_line = ""
+        for w in words:
+            if len(w) == 1:
+                justified_line += w
+            else:
+                for i, ch in enumerate(w):
+                    justified_line += ch
+                    if i < len(w) - 1:
+                        justified_line += "ـ" * extend_chars_per_pos
+            justified_line += " "  # مسافة بين الكلمات
+
+        return justified_line.strip()
 
     while font_size > 10:
         font = ImageFont.truetype(FONT_PATH, font_size)
@@ -166,13 +167,12 @@ def add_text(text: str) -> BytesIO:
     logger.info(f"بدء رسم النص عند النقطة y={y_start}")
 
     for line in lines:
-        line = stretch_text(line, font, max_width)
-        bbox = draw.textbbox((0, 0), line, font=font)
+        justified_line = justify_line(line, draw, font, max_width)
+        bbox = draw.textbbox((0, 0), justified_line, font=font)
         line_width = bbox[2] - bbox[0]
         line_height = bbox[3] - bbox[1]
         x_start = left_x + (max_width - line_width) / 2
-        draw.text((x_start, y_start), line, font=font, fill="white")
-        logger.info(f"رسم السطر: '{line}' عند x={x_start}, y={y_start}")
+        draw.text((x_start, y_start), justified_line, font=font, fill="white")
         y_start += line_height + 5
 
     out = BytesIO()
