@@ -53,7 +53,6 @@ def get_main_keyboard():
         ["➕ إضافة شعار إلى صورة"],
         ["📝 إضافة نص إلى صورة"],
     ]
-    # أزرار تظهر بشكل دائم
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 # ================== IMAGE FUNCTIONS ==================
@@ -92,9 +91,29 @@ def add_text(text: str) -> BytesIO:
     out.seek(0)
     return out
 
+# ================== TIMEOUT HANDLER USING JobQueue ==================
+async def send_menu_due_to_timeout(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    chat_id = job.chat_id
+    logger.info(f"Timeout expired for chat_id {chat_id}, sending menu")
+    await context.bot.send_message(
+        chat_id,
+        "انتهى وقت الانتظار. الرجاء اختيار العملية مجدداً:",
+        reply_markup=get_main_keyboard(),
+    )
+
+def reset_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # إلغاء أي مؤقت سابق للمستخدم
+    if "timeout_job" in context.user_data:
+        context.user_data["timeout_job"].schedule_removal()
+    # إنشاء مؤقت جديد لـ 180 ثانية
+    job = context.job_queue.run_once(send_menu_due_to_timeout, 180, chat_id=update.effective_chat.id)
+    context.user_data["timeout_job"] = job
+
 # ================== BOT HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("User started the bot")
+    reset_timeout(update, context)
     await update.message.reply_text(
         "اختر العملية:",
         reply_markup=get_main_keyboard(),
@@ -102,6 +121,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MODE_SELECTION
 
 async def mode_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reset_timeout(update, context)
     text = update.message.text
     logger.info(f"Mode selection received: {text}")
 
@@ -124,6 +144,7 @@ async def mode_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MODE_SELECTION
 
 async def handle_logo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reset_timeout(update, context)
     if not update.message.photo:
         await update.message.reply_text("الرجاء إرسال صورة صالحة.")
         return MODE_LOGO
@@ -148,6 +169,7 @@ async def handle_logo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MODE_LOGO
 
 async def handle_text_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reset_timeout(update, context)
     text = update.message.text
     logger.info(f"Received text to add: {text}")
 
@@ -165,21 +187,15 @@ async def handle_text_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MODE_TEXT
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # عند الإلغاء، نحذف مؤقت انتهاء المهلة إن وجد
+    if "timeout_job" in context.user_data:
+        context.user_data["timeout_job"].schedule_removal()
+
     await update.message.reply_text(
         "تم إلغاء العملية. لاختيار عملية جديدة اكتب /start",
         reply_markup=ReplyKeyboardRemove(),
     )
     return ConversationHandler.END
-
-async def conversation_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # قد لا يكون update موجود في بعض حالات timeout
-    # فقط نرسل رسالة عامة
-    if update and update.message:
-        await update.message.reply_text(
-            "انتهى وقت الانتظار. الرجاء اختيار العملية مجدداً:",
-            reply_markup=get_main_keyboard(),
-        )
-    return MODE_SELECTION
 
 # ================== WEB UI ==================
 @app.route("/")
@@ -213,17 +229,14 @@ def main():
             ],
             MODE_LOGO: [
                 MessageHandler(filters.PHOTO, handle_logo),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, mode_selection),  # نص بدل صورة؟
+                MessageHandler(filters.TEXT & ~filters.COMMAND, mode_selection),
             ],
             MODE_TEXT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_mode),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
-        conversation_timeout=180,  # 3 دقائق مهلة
         allow_reentry=True,
-        # إضافة استدعاء عند انتهاء المهلة (في مكتبات حديثة فقط)
-        on_timeout=conversation_timeout,
     )
 
     app_bot.add_handler(conv_handler)
